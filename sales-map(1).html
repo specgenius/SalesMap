@@ -446,7 +446,7 @@
 
         <div class="box" style="flex-grow: 1; overflow-y: auto;">
             <label>2. Select Rep to Assign</label>
-            <p class="micro-copy">Click a rep, then click map. Deselect to erase.</p>
+            <p class="micro-copy">Click a rep, then click map. You can stack up to 2 reps per territory. Deselect to erase.</p>
             <div id="rep-list"></div>
         </div>
 
@@ -518,6 +518,7 @@
         applyTheme(currentTheme);
 
         // Attach the drawing layers to the mapWrapper instead of the SVG directly
+        const gradientsLayer = svg.append("defs").attr("id", "territory-gradients");
         const mapLayer = mapWrapper.append("g").attr("id", "map-layer");
         const meshLayer = mapWrapper.append("path").attr("id", "state-mesh");
         const labelsLayer = mapWrapper.append("g").attr("id", "labels");
@@ -586,6 +587,37 @@
 
         function getMapKey(d) {
             return currentMode === 'state' ? d.properties.name : d.id;
+        }
+
+        function normalizeAssignment(value) {
+            if (Array.isArray(value)) return [...new Set(value.filter(Boolean))].slice(0, 2);
+            if (typeof value === 'string' && value) return [value];
+            return [];
+        }
+
+        function getAssignedRepIds(territoriesData, mapKey) {
+            return normalizeAssignment(territoriesData[mapKey]).filter(repId => !!reps[repId]);
+        }
+
+        function saveActiveTerritories(territoriesData) {
+            if (currentMode === 'state') localStorage.setItem('mapTerritories', JSON.stringify(territoriesData));
+            else localStorage.setItem('mapCountyTerritories', JSON.stringify(territoriesData));
+        }
+
+        function compactAssignmentsForDeletedRep(territories, deletedRepId) {
+            for (const key in territories) {
+                const remaining = normalizeAssignment(territories[key]).filter(repId => repId !== deletedRepId);
+                if (remaining.length === 0) delete territories[key];
+                else territories[key] = remaining;
+            }
+        }
+
+        function toSafeId(text) {
+            return String(text).replace(/[^a-zA-Z0-9_-]/g, "_");
+        }
+
+        function getInitials(name) {
+            return name.split(/\s+/).filter(Boolean).map(part => part[0]).join('').slice(0, 3).toUpperCase();
         }
 
         function renderMapLayer() {
@@ -706,8 +738,10 @@
             const territoriesData = getActiveTerritories();
             let repCounts = {};
             for (let key in territoriesData) {
-                let rId = territoriesData[key];
-                repCounts[rId] = (repCounts[rId] || 0) + 1;
+                const assignedRepIds = getAssignedRepIds(territoriesData, key);
+                assignedRepIds.forEach(rId => {
+                    repCounts[rId] = (repCounts[rId] || 0) + 1;
+                });
             }
 
             const repIds = Object.keys(reps);
@@ -748,7 +782,11 @@
                         delete reps[id];
                         if (activeRepId === id) activeRepId = null;
                         if (editingRepId === id) resetForm();
+                        compactAssignmentsForDeletedRep(stateTerritories, id);
+                        compactAssignmentsForDeletedRep(countyTerritories, id);
                         localStorage.setItem('mapReps', JSON.stringify(reps));
+                        localStorage.setItem('mapTerritories', JSON.stringify(stateTerritories));
+                        localStorage.setItem('mapCountyTerritories', JSON.stringify(countyTerritories));
                         renderRoster();
                         renderColorsAndLabels();
                     }
@@ -761,34 +799,54 @@
 
         // Coloring & Click Logic
         function handleStateClick(event, d) {
-            saveStateToHistory();
             const mapKey = getMapKey(d);
             const territoriesData = getActiveTerritories();
+            const assignedRepIds = getAssignedRepIds(territoriesData, mapKey);
 
             if (!activeRepId) {
-                if (territoriesData[mapKey]) {
+                if (assignedRepIds.length > 0) {
+                    saveStateToHistory();
                     delete territoriesData[mapKey];
-                } else return; 
+                } else return;
             } else {
-                if (territoriesData[mapKey] === activeRepId) {
-                    delete territoriesData[mapKey]; 
+                saveStateToHistory();
+                if (assignedRepIds.includes(activeRepId)) {
+                    const remaining = assignedRepIds.filter(repId => repId !== activeRepId);
+                    if (remaining.length === 0) delete territoriesData[mapKey];
+                    else territoriesData[mapKey] = remaining;
+                } else if (assignedRepIds.length < 2) {
+                    territoriesData[mapKey] = [...assignedRepIds, activeRepId];
                 } else {
-                    territoriesData[mapKey] = activeRepId; 
+                    // Keep max two reps: when full, rotate out the oldest assignment.
+                    territoriesData[mapKey] = [assignedRepIds[1], activeRepId];
                 }
             }
 
-            if (currentMode === 'state') localStorage.setItem('mapTerritories', JSON.stringify(territoriesData));
-            else localStorage.setItem('mapCountyTerritories', JSON.stringify(territoriesData));
+            saveActiveTerritories(territoriesData);
             
             renderColorsAndLabels();
         }
 
         function renderColorsAndLabels() {
             const territoriesData = getActiveTerritories();
+            gradientsLayer.selectAll("*").remove();
 
             mapLayer.selectAll("path").style("fill", function(d) {
-                const assignedRepId = territoriesData[getMapKey(d)];
-                if (assignedRepId && reps[assignedRepId]) return reps[assignedRepId].color;
+                const mapKey = getMapKey(d);
+                const assignedRepIds = getAssignedRepIds(territoriesData, mapKey);
+                if (assignedRepIds.length === 1) return reps[assignedRepIds[0]].color;
+                if (assignedRepIds.length === 2) {
+                    const gradientId = `grad_${currentMode}_${toSafeId(mapKey)}_${toSafeId(assignedRepIds[0])}_${toSafeId(assignedRepIds[1])}`;
+                    const gradient = gradientsLayer.append("linearGradient")
+                        .attr("id", gradientId)
+                        .attr("x1", "0%")
+                        .attr("y1", "0%")
+                        .attr("x2", "100%")
+                        .attr("y2", "100%");
+                    gradient.append("stop").attr("offset", "0%").attr("stop-color", reps[assignedRepIds[0]].color);
+                    gradient.append("stop").attr("offset", "100%").attr("stop-color", reps[assignedRepIds[1]].color);
+                    return `url(#${gradientId})`;
+                }
                 return "#dcdcdc";
             });
 
@@ -803,10 +861,11 @@
 
                 const occupied = [];
                 mapLayer.selectAll("path").each(function(d) {
-                    const assignedRepId = territoriesData[getMapKey(d)];
+                    const assignedRepIds = getAssignedRepIds(territoriesData, getMapKey(d));
                     
-                    if (assignedRepId && reps[assignedRepId]) {
-                        const rep = reps[assignedRepId];
+                    if (assignedRepIds.length > 0) {
+                        const repNames = assignedRepIds.map(repId => reps[repId]?.name).filter(Boolean);
+                        if (repNames.length === 0) return;
                         const centroid = path.centroid(d);
                         
                         if (!Number.isNaN(centroid[0])) {
@@ -819,7 +878,9 @@
                             if (tooClose) return;
                             occupied.push(centroid);
 
-                            const labelText = zoomK < 2 ? rep.name.split(/\s+/).map(part => part[0]).join('').slice(0, 3).toUpperCase() : rep.name;
+                            const labelText = zoomK < 2
+                                ? repNames.map(name => getInitials(name)).join('/')
+                                : repNames.join(' / ');
                             const labelG = labelsLayer.append("g")
                                 .attr("transform", `translate(${centroid[0]}, ${centroid[1]})`)
                                 .style("pointer-events", "none");
@@ -867,7 +928,8 @@
             const checklist = document.getElementById('onboarding-checklist');
             const repCount = Object.keys(reps).length;
             const territoriesData = getActiveTerritories();
-            const assignedCount = Object.keys(territoriesData).length;
+            const assignedCount = Object.keys(territoriesData)
+                .filter(key => getAssignedRepIds(territoriesData, key).length > 0).length;
 
             const steps = [
                 { done: repCount > 0, label: `Add reps (${repCount})` },
