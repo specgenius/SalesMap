@@ -831,7 +831,7 @@
             const territoriesData = getActiveTerritories();
             gradientsLayer.selectAll("*").remove();
 
-            mapLayer.selectAll("path").style("fill", function(d) {
+            mapLayer.selectAll("path").attr("fill", function(d) {
                 const mapKey = getMapKey(d);
                 const assignedRepIds = getAssignedRepIds(territoriesData, mapKey);
                 if (assignedRepIds.length === 1) return reps[assignedRepIds[0]].color;
@@ -843,7 +843,10 @@
                         .attr("y1", "0%")
                         .attr("x2", "100%")
                         .attr("y2", "100%");
+                    // Hard 50/50 split to make dual ownership obvious at a glance.
                     gradient.append("stop").attr("offset", "0%").attr("stop-color", reps[assignedRepIds[0]].color);
+                    gradient.append("stop").attr("offset", "49.5%").attr("stop-color", reps[assignedRepIds[0]].color);
+                    gradient.append("stop").attr("offset", "50.5%").attr("stop-color", reps[assignedRepIds[1]].color);
                     gradient.append("stop").attr("offset", "100%").attr("stop-color", reps[assignedRepIds[1]].color);
                     return `url(#${gradientId})`;
                 }
