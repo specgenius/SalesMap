@@ -1,0 +1,925 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sales Territory Map</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script src="https://unpkg.com/topojson-client@3"></script>
+    <style>
+        :root {
+            --bg: #fafafa;
+            --panel: rgba(255, 255, 255, 0.92);
+            --panel-solid: #ffffff;
+            --ink: #111111;
+            --muted: #666666;
+            --line: #eaeaea;
+            --primary: #111111;
+            --primary-strong: #000000;
+            --danger: #d7263d;
+            --warning: #a16207;
+            --radius: 12px;
+            --shadow-soft: 0 1px 0 rgba(0, 0, 0, 0.04), 0 12px 28px rgba(0, 0, 0, 0.04);
+            --shadow-ui: 0 10px 24px rgba(0, 0, 0, 0.08);
+        }
+        body.dark-mode {
+            --bg: #0a0a0a;
+            --panel: rgba(17, 17, 17, 0.9);
+            --panel-solid: #111111;
+            --ink: #ededed;
+            --muted: #a0a0a0;
+            --line: #2a2a2a;
+            --primary: #fafafa;
+            --primary-strong: #ffffff;
+            --danger: #ff4d66;
+            --warning: #eab308;
+            --shadow-soft: 0 1px 0 rgba(255, 255, 255, 0.04), 0 12px 28px rgba(0, 0, 0, 0.5);
+            --shadow-ui: 0 10px 24px rgba(0, 0, 0, 0.45);
+        }
+        * { box-sizing: border-box; }
+        body {
+            font-family: "Inter", "Segoe UI", Roboto, Arial, sans-serif;
+            margin: 0;
+            display: flex;
+            height: 100vh;
+            color: var(--ink);
+            background: var(--bg);
+        }
+        #sidebar {
+            width: 350px;
+            background: var(--panel);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            padding: 24px;
+            box-shadow: 0 0 0 1px #ececec, 0 16px 32px rgba(0, 0, 0, 0.05);
+            z-index: 10;
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto;
+            border-right: 1px solid #ececec;
+        }
+        #map-container {
+            flex-grow: 1;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            position: relative;
+            overflow: hidden; /* Keeps map from spilling out when panned */
+            background: #fcfcfc;
+        }
+        .box {
+            background: var(--panel-solid);
+            padding: 16px;
+            border-radius: var(--radius);
+            border: 1px solid var(--line);
+            margin-bottom: 16px;
+            box-shadow: var(--shadow-soft);
+        }
+        .box h3 {
+            margin: 0 0 10px 0;
+            font-size: 14px;
+            letter-spacing: 0.2px;
+            color: var(--ink);
+        }
+        h2 {
+            margin: 0 0 16px 0;
+            font-size: 20px;
+            letter-spacing: -0.3px;
+            color: var(--ink);
+        }
+        label { font-weight: 700; display: block; margin-bottom: 10px; font-size: 13px; color: #1f1f1f; }
+        
+        input[type="text"] {
+            width: 100%;
+            padding: 11px 12px;
+            margin-bottom: 10px;
+            border: 1px solid #dedede;
+            border-radius: 10px;
+            background: #ffffff;
+            color: var(--ink);
+            transition: border-color 0.15s, box-shadow 0.15s;
+        }
+        input[type="text"]:focus {
+            outline: none;
+            border-color: #111111;
+            box-shadow: 0 0 0 3px rgba(17, 17, 17, 0.12);
+        }
+        .flex-row { display: flex; gap: 10px; margin-bottom: 5px; }
+        input[type="color"] {
+            width: 52px;
+            height: 42px;
+            padding: 3px;
+            border: 1px solid #dedede;
+            background: #fff;
+            border-radius: 10px;
+            cursor: pointer;
+        }
+        
+        button {
+            width: 100%;
+            padding: 11px 12px;
+            background: var(--primary);
+            color: #fff;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            font-weight: 700;
+            letter-spacing: 0.2px;
+            transition: transform 0.12s, filter 0.12s, box-shadow 0.12s;
+            box-shadow: 0 6px 16px rgba(0, 0, 0, 0.16);
+        }
+        button:hover { background: #222222; transform: translateY(-1px); }
+        button:active { transform: translateY(0); }
+        button:disabled { background: #c4cce0; box-shadow: none; cursor: not-allowed; }
+        
+        #cancel-edit-btn { background: #6b7280; display: none; margin-top: 6px;}
+        #cancel-edit-btn:hover { filter: brightness(1.04); }
+
+        .action-buttons { display: flex; gap: 10px; margin-top: auto; padding-top: 6px;}
+        #undo-btn { background: #2f2f2f; color: #fff; box-shadow: 0 6px 16px rgba(0, 0, 0, 0.18); }
+        #clear-map { background: #ffffff; color: #111111; border: 1px solid #dedede; box-shadow: none; }
+        #clear-map:hover { background: #f7f7f7; }
+        
+        .rep-item {
+            display: flex; align-items: center; padding: 10px 11px; background: #fff; border: 1px solid #ececec;
+            margin-bottom: 7px; border-radius: 10px; cursor: pointer; transition: border-color 0.15s, transform 0.12s, box-shadow 0.15s;
+        }
+        .rep-item:hover { border-color: #d5d5d5; box-shadow: 0 8px 16px rgba(0, 0, 0, 0.05); transform: translateY(-1px); }
+        .rep-item.active { border-color: #111111; background: #f6f6f6; box-shadow: 0 0 0 3px rgba(17, 17, 17, 0.1); }
+        .color-dot { width: 16px; height: 16px; border-radius: 50%; margin-right: 10px; border: 1px solid #d5d5d5; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.7);}
+        .state-count { font-size: 12px; color: var(--muted); font-weight: 500; margin-left: 5px; }
+        .empty-state {
+            font-size: 13px;
+            color: var(--muted);
+            background: #fff;
+            border: 1px dashed #d8d8d8;
+            border-radius: 10px;
+            padding: 12px;
+            line-height: 1.4;
+        }
+        
+        .icon-btn { width: auto; padding: 6px 8px; background: none; border: none; cursor: pointer; font-weight: 700; font-size: 14px; box-shadow: none; }
+        .edit-btn { color: var(--primary); }
+        .edit-btn:hover { color: var(--primary-strong); background: #f2f2f2; border-radius: 8px; transform: none; }
+        .delete-btn { color: var(--danger); }
+        .delete-btn:hover { color: #d7355f; background: #ffe7ee; border-radius: 8px; transform: none; }
+        
+        /* Map Styles */
+        .map-path { fill: #dddddd; cursor: pointer; transition: filter 0.1s, opacity 0.1s; }
+        .map-path:hover { opacity: 0.92; stroke: #111111; filter: saturate(1.03); }
+        
+        .state-mode { stroke: #ffffff; stroke-width: 1.5; }
+        .county-mode { stroke: #ffffff; stroke-width: 0.5; } 
+        
+        #state-mesh { fill: none; stroke: #4a4a4a; stroke-width: 1.5; pointer-events: none; display: none; }
+        
+        text { pointer-events: none; }
+
+        #tooltip {
+            position: absolute; background: rgba(17, 17, 17, 0.95); color: #fff;
+            padding: 8px 11px; border-radius: 9px; font-size: 12px; font-weight: 700;
+            pointer-events: none; opacity: 0; transition: opacity 0.1s; z-index: 1000;
+            box-shadow: var(--shadow-ui); transform: translateX(-50%); white-space: nowrap;
+            letter-spacing: 0.2px;
+        }
+
+        .toggle-container { display: flex; gap: 14px; margin-bottom: 4px;}
+        .toggle-container label {
+            font-weight: 600;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            color: #222222;
+            padding: 6px 8px;
+            border-radius: 8px;
+            transition: background 0.15s;
+        }
+        .toggle-container label:hover { background: #f5f5f5; }
+        .toggle-container input[type="radio"] { accent-color: var(--primary); }
+        .checklist {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+            display: grid;
+            gap: 8px;
+        }
+        .checklist li {
+            font-size: 13px;
+            color: #333333;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .check-icon {
+            width: 18px;
+            text-align: center;
+            font-weight: bold;
+            color: #9aa0a6;
+        }
+        .checklist li.done .check-icon { color: #179268; }
+        .hint {
+            font-size: 12px;
+            color: var(--muted);
+            margin-top: 8px;
+            line-height: 1.4;
+        }
+        .subheading {
+            margin: 8px 0 18px 0;
+            font-size: 12px;
+            color: var(--muted);
+            letter-spacing: 0.2px;
+        }
+        .micro-copy {
+            font-size: 12px;
+            color: var(--muted);
+            margin-top: 0;
+            margin-bottom: 10px;
+        }
+
+        /* NEW: Zoom Controls UI */
+        .zoom-controls {
+            position: absolute;
+            bottom: 30px;
+            right: 30px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            z-index: 100;
+        }
+        .zoom-btn {
+            width: 36px;
+            height: 36px;
+            background: rgba(255, 255, 255, 0.95);
+            color: #2b3c5b;
+            border: 1px solid #d5dff4;
+            border-radius: 10px;
+            font-size: 20px;
+            font-weight: bold;
+            cursor: pointer;
+            box-shadow: var(--shadow-ui);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 0;
+        }
+        .zoom-btn:hover { background: #f1f5ff; transform: translateY(-1px); }
+        .top-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+        }
+        .top-row h2 { margin: 0; line-height: 1.2; }
+        .theme-toggle {
+            width: auto;
+            border: 0;
+            background: transparent;
+            color: var(--ink);
+            box-shadow: none;
+            border-radius: 999px;
+            padding: 0;
+            font-size: 12px;
+            font-weight: 600;
+            letter-spacing: 0;
+            min-width: 0;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .theme-toggle:hover {
+            background: transparent;
+            transform: none;
+        }
+        .theme-toggle .switch-track {
+            width: 42px;
+            height: 24px;
+            border-radius: 999px;
+            border: 1px solid #cfcfcf;
+            background: #e9e9e9;
+            position: relative;
+            transition: background 0.18s ease, border-color 0.18s ease;
+        }
+        .theme-toggle .switch-thumb {
+            position: absolute;
+            top: 2px;
+            left: 2px;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: #ffffff;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+            transition: transform 0.18s ease;
+        }
+        .theme-toggle.is-dark .switch-track {
+            background: #111111;
+            border-color: #111111;
+        }
+        .theme-toggle.is-dark .switch-thumb {
+            transform: translateX(18px);
+        }
+        .theme-toggle .switch-label {
+            color: var(--muted);
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        body.dark-mode #sidebar {
+            box-shadow: 0 0 0 1px #1f1f1f, 0 16px 32px rgba(0, 0, 0, 0.55);
+            border-right-color: #1f1f1f;
+        }
+        body.dark-mode #map-container { background: #070707; }
+        body.dark-mode label { color: #d9d9d9; }
+        body.dark-mode input[type="text"] {
+            background: #151515;
+            border-color: #2d2d2d;
+            color: #ededed;
+        }
+        body.dark-mode input[type="text"]:focus {
+            border-color: #f5f5f5;
+            box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.14);
+        }
+        body.dark-mode input[type="color"] {
+            background: #151515;
+            border-color: #2d2d2d;
+        }
+        body.dark-mode button {
+            background: #f5f5f5;
+            color: #111111;
+            box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35);
+        }
+        body.dark-mode button:hover { background: #ffffff; }
+        body.dark-mode #cancel-edit-btn {
+            background: #2f2f2f;
+            color: #ededed;
+        }
+        body.dark-mode #undo-btn {
+            background: #ededed;
+            color: #111111;
+        }
+        body.dark-mode #clear-map {
+            background: #141414;
+            color: #f1f1f1;
+            border-color: #2d2d2d;
+        }
+        body.dark-mode #clear-map:hover { background: #1c1c1c; }
+        body.dark-mode .rep-item {
+            background: #121212;
+            border-color: #262626;
+        }
+        body.dark-mode .rep-item:hover {
+            border-color: #373737;
+            box-shadow: 0 8px 16px rgba(0, 0, 0, 0.28);
+        }
+        body.dark-mode .rep-item.active {
+            border-color: #f0f0f0;
+            background: #191919;
+            box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.12);
+        }
+        body.dark-mode .color-dot { border-color: #3a3a3a; }
+        body.dark-mode .empty-state {
+            background: #121212;
+            border-color: #2f2f2f;
+        }
+        body.dark-mode .edit-btn:hover { background: #1f1f1f; }
+        body.dark-mode .delete-btn:hover { background: #2a161b; }
+        body.dark-mode .map-path { fill: #2a2a2a; }
+        body.dark-mode .map-path:hover { stroke: #f0f0f0; }
+        body.dark-mode #state-mesh { stroke: #8f8f8f; }
+        body.dark-mode #tooltip {
+            background: rgba(240, 240, 240, 0.97);
+            color: #111111;
+        }
+        body.dark-mode .toggle-container label { color: #d4d4d4; }
+        body.dark-mode .toggle-container label:hover { background: #1e1e1e; }
+        body.dark-mode .checklist li { color: #d4d4d4; }
+        body.dark-mode .check-icon { color: #787878; }
+        body.dark-mode .theme-toggle .switch-track {
+            border-color: #444444;
+            background: #303030;
+        }
+        body.dark-mode .theme-toggle.is-dark .switch-track {
+            background: #fafafa;
+            border-color: #fafafa;
+        }
+        body.dark-mode .theme-toggle.is-dark .switch-thumb { background: #111111; }
+        body.dark-mode .zoom-btn {
+            background: rgba(18, 18, 18, 0.96);
+            color: #f1f1f1;
+            border-color: #2a2a2a;
+        }
+        body.dark-mode .zoom-btn:hover { background: #222222; }
+    </style>
+</head>
+<body>
+
+    <div id="sidebar">
+        <div class="top-row">
+            <h2>Territory Manager</h2>
+            <button id="theme-toggle" class="theme-toggle" type="button" role="switch" aria-checked="false" title="Toggle dark mode">
+                <span class="switch-track"><span class="switch-thumb"></span></span>
+                <span class="switch-label">Dark mode</span>
+            </button>
+        </div>
+        <p class="subheading">Design territories faster with a cleaner workflow.</p>
+
+        <div class="box">
+            <label>Map View Mode</label>
+            <div class="toggle-container">
+                <label><input type="radio" name="map-mode" value="state" checked> States</label>
+                <label><input type="radio" name="map-mode" value="county"> Counties</label>
+            </div>
+        </div>
+
+        <div class="box">
+            <label id="form-title">1. Add a Sales Rep</label>
+            <input type="text" id="rep-name" placeholder="Enter Rep Name">
+            <div class="flex-row">
+                <input type="color" id="rep-color" value="#4CAF50">
+                <button id="add-rep-btn">Add Rep</button>
+            </div>
+            <button id="cancel-edit-btn">Cancel Edit</button>
+        </div>
+
+        <div class="box" style="flex-grow: 1; overflow-y: auto;">
+            <label>2. Select Rep to Assign</label>
+            <p class="micro-copy">Click a rep, then click map. Deselect to erase.</p>
+            <div id="rep-list"></div>
+        </div>
+
+        <div class="box">
+            <h3>Quick Checklist</h3>
+            <ul id="onboarding-checklist" class="checklist"></ul>
+            <p class="hint">Shortcuts: <strong>U</strong> undo, <strong>Esc</strong> deselect rep, <strong>+</strong>/<strong>-</strong> zoom, <strong>0</strong> reset zoom.</p>
+        </div>
+        
+        <div class="action-buttons">
+            <button id="undo-btn" disabled>↩ Undo</button>
+            <button id="clear-map">Clear Map</button>
+        </div>
+    </div>
+
+    <div id="map-container">
+        <div class="zoom-controls">
+            <button class="zoom-btn" id="zoom-in" title="Zoom In">+</button>
+            <button class="zoom-btn" id="zoom-out" title="Zoom Out">−</button>
+            <button class="zoom-btn" id="zoom-reset" title="Reset Zoom">⟲</button>
+        </div>
+    </div>
+    
+    <div id="tooltip"></div>
+
+    <script>
+        const width = 975;
+        const height = 610;
+        const svg = d3.select("#map-container")
+            .append("svg")
+            .attr("width", "100%")
+            .attr("height", "100%")
+            .attr("viewBox", `0 0 ${width} ${height}`);
+
+        // NEW: Map Wrapper Group. We apply the zoom transformation to this group, moving everything inside it at once.
+        const mapWrapper = svg.append("g").attr("id", "map-wrapper");
+
+        const path = d3.geoPath();
+        const tooltip = d3.select("#tooltip");
+        const themeToggleBtn = document.getElementById('theme-toggle');
+
+        let currentMode = 'state'; 
+        let stateFeatures = [];
+        let countyFeatures = [];
+        let stateMeshLines = null;
+        let activeRepId = null;
+        let editingRepId = null; 
+        
+        let reps = JSON.parse(localStorage.getItem('mapReps')) || {};
+        let stateTerritories = JSON.parse(localStorage.getItem('mapTerritories')) || {};
+        let countyTerritories = JSON.parse(localStorage.getItem('mapCountyTerritories')) || {};
+        let currentTheme = localStorage.getItem('mapTheme') || 'light';
+        
+        let stateHistory = [];
+        let countyHistory = [];
+
+        function applyTheme(theme) {
+            currentTheme = theme;
+            document.body.classList.toggle('dark-mode', theme === 'dark');
+            themeToggleBtn.classList.toggle('is-dark', theme === 'dark');
+            themeToggleBtn.setAttribute('aria-checked', theme === 'dark' ? 'true' : 'false');
+            localStorage.setItem('mapTheme', theme);
+        }
+
+        themeToggleBtn.addEventListener('click', () => {
+            applyTheme(currentTheme === 'dark' ? 'light' : 'dark');
+        });
+
+        applyTheme(currentTheme);
+
+        // Attach the drawing layers to the mapWrapper instead of the SVG directly
+        const mapLayer = mapWrapper.append("g").attr("id", "map-layer");
+        const meshLayer = mapWrapper.append("path").attr("id", "state-mesh");
+        const labelsLayer = mapWrapper.append("g").attr("id", "labels");
+
+        // --- ZOOM LOGIC ---
+        const defaultZoomConstrain = d3.zoom().constrain();
+        const recenterThreshold = 1.35;
+        const zoom = d3.zoom()
+            .scaleExtent([1, 8]) // Limits zoom: 1x (default) to 8x (close up)
+            .constrain((transform, extent, translateExtent) => {
+                const constrained = defaultZoomConstrain(transform, extent, translateExtent);
+
+                // As user zooms back toward 1x, smoothly pull panning back to center.
+                if (constrained.k <= recenterThreshold) {
+                    const pullStrength = (recenterThreshold - constrained.k) / (recenterThreshold - 1);
+                    const adjustedX = constrained.x * (1 - pullStrength);
+                    const adjustedY = constrained.y * (1 - pullStrength);
+                    return d3.zoomIdentity.translate(adjustedX, adjustedY).scale(constrained.k);
+                }
+
+                return constrained;
+            })
+            .on("zoom", (event) => {
+                // Move and scale the map
+                mapWrapper.attr("transform", event.transform);
+                
+                // Keep the border lines crisp by dividing their thickness by the current zoom level
+                mapLayer.selectAll(".state-mode").style("stroke-width", 1.5 / event.transform.k);
+                mapLayer.selectAll(".county-mode").style("stroke-width", 0.5 / event.transform.k);
+                meshLayer.style("stroke-width", 1.5 / event.transform.k);
+            })
+            .on("end", () => {
+                // Recompute labels after zooming to avoid dense overlap at low zoom levels.
+                if (currentMode === 'state') renderColorsAndLabels();
+            });
+
+        // Activate zoom behavior on the main SVG
+        svg.call(zoom);
+
+        // Button Listeners for Zoom
+        d3.select("#zoom-in").on("click", () => svg.transition().duration(300).call(zoom.scaleBy, 1.5));
+        d3.select("#zoom-out").on("click", () => svg.transition().duration(300).call(zoom.scaleBy, 0.75));
+        d3.select("#zoom-reset").on("click", () => svg.transition().duration(300).call(zoom.transform, d3.zoomIdentity));
+
+        // --- MAP DATA LOADING ---
+        d3.json("https://cdn.jsdelivr.net/npm/us-atlas@3/counties-albers-10m.json").then(data => {
+            stateFeatures = topojson.feature(data, data.objects.states).features;
+            countyFeatures = topojson.feature(data, data.objects.counties).features;
+            stateMeshLines = topojson.mesh(data, data.objects.states, (a, b) => a !== b);
+            renderMapLayer();
+        });
+
+        // Toggle Logic
+        document.querySelectorAll('input[name="map-mode"]').forEach(radio => {
+            radio.addEventListener('change', (e) => {
+                currentMode = e.target.value;
+                const historyArr = currentMode === 'state' ? stateHistory : countyHistory;
+                document.getElementById('undo-btn').disabled = historyArr.length === 0;
+                renderMapLayer();
+            });
+        });
+
+        function getActiveTerritories() {
+            return currentMode === 'state' ? stateTerritories : countyTerritories;
+        }
+
+        function getMapKey(d) {
+            return currentMode === 'state' ? d.properties.name : d.id;
+        }
+
+        function renderMapLayer() {
+            const features = currentMode === 'state' ? stateFeatures : countyFeatures;
+            const styleClass = currentMode === 'state' ? 'state-mode' : 'county-mode';
+
+            mapLayer.selectAll("*").remove();
+
+            mapLayer.selectAll("path")
+                .data(features)
+                .enter()
+                .append("path")
+                .attr("d", path)
+                .attr("class", `map-path ${styleClass}`)
+                .on("mouseover", function(event, d) {
+                    tooltip.style("opacity", 1)
+                           .text(currentMode === 'county' ? d.properties.name + ' County' : d.properties.name);
+                })
+                .on("mousemove", function(event) {
+                    tooltip.style("left", event.pageX + "px")
+                           .style("top", (event.pageY + 25) + "px");
+                })
+                .on("mouseout", function() { tooltip.style("opacity", 0); })
+                .on("click", handleStateClick);
+
+            if (currentMode === 'county') {
+                meshLayer.attr("d", path(stateMeshLines)).style("display", "block");
+            } else {
+                meshLayer.style("display", "none");
+            }
+
+            // Re-apply the dynamic stroke width to the new map layer based on current zoom
+            const currentZoomTransform = d3.zoomTransform(svg.node());
+            mapLayer.selectAll(`.${styleClass}`).style("stroke-width", (currentMode === 'state' ? 1.5 : 0.5) / currentZoomTransform.k);
+            meshLayer.style("stroke-width", 1.5 / currentZoomTransform.k);
+
+            renderColorsAndLabels();
+        }
+
+        // History Logic
+        function saveStateToHistory() {
+            if (currentMode === 'state') {
+                stateHistory.push(JSON.parse(JSON.stringify(stateTerritories)));
+                if (stateHistory.length > 30) stateHistory.shift(); 
+            } else {
+                countyHistory.push(JSON.parse(JSON.stringify(countyTerritories)));
+                if (countyHistory.length > 30) countyHistory.shift(); 
+            }
+            document.getElementById('undo-btn').disabled = false;
+        }
+
+        document.getElementById('undo-btn').addEventListener('click', () => {
+            if (currentMode === 'state') {
+                if (stateHistory.length === 0) return;
+                stateTerritories = stateHistory.pop();
+                localStorage.setItem('mapTerritories', JSON.stringify(stateTerritories));
+                if (stateHistory.length === 0) document.getElementById('undo-btn').disabled = true;
+            } else {
+                if (countyHistory.length === 0) return;
+                countyTerritories = countyHistory.pop();
+                localStorage.setItem('mapCountyTerritories', JSON.stringify(countyTerritories));
+                if (countyHistory.length === 0) document.getElementById('undo-btn').disabled = true;
+            }
+            renderColorsAndLabels();
+        });
+
+        // Form Logic
+        const nameInput = document.getElementById('rep-name');
+        const colorInput = document.getElementById('rep-color');
+        const formBtn = document.getElementById('add-rep-btn');
+        const cancelBtn = document.getElementById('cancel-edit-btn');
+        const formTitle = document.getElementById('form-title');
+
+        formBtn.addEventListener('click', () => {
+            const name = nameInput.value.trim();
+            if (!name) return alert("Please type a name first.");
+
+            if (editingRepId) {
+                reps[editingRepId].name = name;
+                reps[editingRepId].color = colorInput.value;
+                resetForm();
+            } else {
+                const id = 'rep_' + Date.now();
+                reps[id] = { id, name, color: colorInput.value };
+                activeRepId = id; 
+            }
+            
+            localStorage.setItem('mapReps', JSON.stringify(reps));
+            nameInput.value = ''; 
+            renderRoster();
+            renderColorsAndLabels(); 
+        });
+
+        cancelBtn.addEventListener('click', resetForm);
+
+        function resetForm() {
+            editingRepId = null;
+            nameInput.value = '';
+            colorInput.value = '#4CAF50';
+            formBtn.innerText = 'Add Rep';
+            formTitle.innerText = '1. Add a Sales Rep';
+            cancelBtn.style.display = 'none';
+        }
+
+        function enterEditMode(rep) {
+            editingRepId = rep.id;
+            nameInput.value = rep.name;
+            colorInput.value = rep.color;
+            formBtn.innerText = 'Save Changes';
+            formTitle.innerText = 'Edit Sales Rep';
+            cancelBtn.style.display = 'block';
+        }
+
+        function renderRoster() {
+            const list = document.getElementById('rep-list');
+            list.innerHTML = '';
+
+            const territoriesData = getActiveTerritories();
+            let repCounts = {};
+            for (let key in territoriesData) {
+                let rId = territoriesData[key];
+                repCounts[rId] = (repCounts[rId] || 0) + 1;
+            }
+
+            const repIds = Object.keys(reps);
+            if (repIds.length === 0) {
+                list.innerHTML = `<div class="empty-state">No reps yet. Add your first rep to start assigning territories.</div>`;
+                renderChecklist();
+                return;
+            }
+
+            for (const id in reps) {
+                const rep = reps[id];
+                const count = repCounts[id] || 0;
+                const unit = currentMode === 'state' ? 'states' : 'counties';
+                
+                const div = document.createElement('div');
+                div.className = `rep-item ${activeRepId === id ? 'active' : ''}`;
+                div.innerHTML = `
+                    <div class="color-dot" style="background: ${rep.color}"></div>
+                    <span style="flex-grow: 1; font-weight: bold;">
+                        ${rep.name} <span class="state-count">(${count} ${unit})</span>
+                    </span>
+                    <button class="icon-btn edit-btn" title="Edit Rep">✎</button>
+                    <button class="icon-btn delete-btn" title="Delete Rep">X</button>
+                `;
+
+                div.onclick = () => {
+                    activeRepId = (activeRepId === id) ? null : id; 
+                    renderRoster(); 
+                };
+
+                div.querySelector('.edit-btn').onclick = (e) => {
+                    e.stopPropagation(); enterEditMode(rep);
+                };
+
+                div.querySelector('.delete-btn').onclick = (e) => {
+                    e.stopPropagation(); 
+                    if (confirm(`Delete ${rep.name}?`)) {
+                        delete reps[id];
+                        if (activeRepId === id) activeRepId = null;
+                        if (editingRepId === id) resetForm();
+                        localStorage.setItem('mapReps', JSON.stringify(reps));
+                        renderRoster();
+                        renderColorsAndLabels();
+                    }
+                };
+                list.appendChild(div);
+            }
+
+            renderChecklist();
+        }
+
+        // Coloring & Click Logic
+        function handleStateClick(event, d) {
+            saveStateToHistory();
+            const mapKey = getMapKey(d);
+            const territoriesData = getActiveTerritories();
+
+            if (!activeRepId) {
+                if (territoriesData[mapKey]) {
+                    delete territoriesData[mapKey];
+                } else return; 
+            } else {
+                if (territoriesData[mapKey] === activeRepId) {
+                    delete territoriesData[mapKey]; 
+                } else {
+                    territoriesData[mapKey] = activeRepId; 
+                }
+            }
+
+            if (currentMode === 'state') localStorage.setItem('mapTerritories', JSON.stringify(territoriesData));
+            else localStorage.setItem('mapCountyTerritories', JSON.stringify(territoriesData));
+            
+            renderColorsAndLabels();
+        }
+
+        function renderColorsAndLabels() {
+            const territoriesData = getActiveTerritories();
+
+            mapLayer.selectAll("path").style("fill", function(d) {
+                const assignedRepId = territoriesData[getMapKey(d)];
+                if (assignedRepId && reps[assignedRepId]) return reps[assignedRepId].color;
+                return "#dcdcdc";
+            });
+
+            labelsLayer.selectAll("*").remove();
+
+            if (currentMode === 'state') {
+                const zoomK = d3.zoomTransform(svg.node()).k;
+                if (zoomK < 1.35) {
+                    renderRoster();
+                    return;
+                }
+
+                const occupied = [];
+                mapLayer.selectAll("path").each(function(d) {
+                    const assignedRepId = territoriesData[getMapKey(d)];
+                    
+                    if (assignedRepId && reps[assignedRepId]) {
+                        const rep = reps[assignedRepId];
+                        const centroid = path.centroid(d);
+                        
+                        if (!Number.isNaN(centroid[0])) {
+                            const minDistance = zoomK < 2 ? 38 : 24;
+                            const tooClose = occupied.some(([x, y]) => {
+                                const dx = centroid[0] - x;
+                                const dy = centroid[1] - y;
+                                return Math.hypot(dx, dy) < minDistance;
+                            });
+                            if (tooClose) return;
+                            occupied.push(centroid);
+
+                            const labelText = zoomK < 2 ? rep.name.split(/\s+/).map(part => part[0]).join('').slice(0, 3).toUpperCase() : rep.name;
+                            const labelG = labelsLayer.append("g")
+                                .attr("transform", `translate(${centroid[0]}, ${centroid[1]})`)
+                                .style("pointer-events", "none");
+
+                            const textElement = labelG.append("text")
+                                .attr("text-anchor", "middle")
+                                .attr("alignment-baseline", "middle")
+                                .attr("font-size", "8px")
+                                .attr("font-weight", "bold")
+                                .attr("fill", "#111")
+                                .text(labelText);
+
+                            const bbox = textElement.node().getBBox();
+                            labelG.insert("rect", "text")
+                                .attr("x", bbox.x - 4)
+                                .attr("y", bbox.y - 2)
+                                .attr("width", bbox.width + 8)
+                                .attr("height", bbox.height + 4)
+                                .attr("fill", "rgba(255, 255, 255, 0.9)")
+                                .attr("rx", 3).attr("ry", 3);
+                        }
+                    }
+                });
+            }
+
+            renderRoster(); 
+        }
+
+        document.getElementById('clear-map').addEventListener('click', () => {
+            const unit = currentMode === 'state' ? 'states' : 'counties';
+            if (confirm(`Erase all ${unit} assignments?`)) {
+                saveStateToHistory(); 
+                if (currentMode === 'state') {
+                    stateTerritories = {};
+                    localStorage.setItem('mapTerritories', JSON.stringify(stateTerritories));
+                } else {
+                    countyTerritories = {};
+                    localStorage.setItem('mapCountyTerritories', JSON.stringify(countyTerritories));
+                }
+                renderColorsAndLabels();
+            }
+        });
+
+        function renderChecklist() {
+            const checklist = document.getElementById('onboarding-checklist');
+            const repCount = Object.keys(reps).length;
+            const territoriesData = getActiveTerritories();
+            const assignedCount = Object.keys(territoriesData).length;
+
+            const steps = [
+                { done: repCount > 0, label: `Add reps (${repCount})` },
+                { done: !!activeRepId, label: activeRepId ? `Rep selected (${reps[activeRepId]?.name || 'selected'})` : 'Select a rep' },
+                { done: assignedCount > 0, label: `Assign territories (${assignedCount})` }
+            ];
+
+            checklist.innerHTML = steps.map(step => `
+                <li class="${step.done ? 'done' : ''}">
+                    <span class="check-icon">${step.done ? '✓' : '○'}</span>
+                    <span>${step.label}</span>
+                </li>
+            `).join('');
+        }
+
+        document.addEventListener('keydown', (event) => {
+            const target = event.target;
+            const isTyping = target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA');
+            if (isTyping) return;
+
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                activeRepId = null;
+                renderRoster();
+                return;
+            }
+
+            if (event.key.toLowerCase() === 'u' && !document.getElementById('undo-btn').disabled) {
+                event.preventDefault();
+                document.getElementById('undo-btn').click();
+                return;
+            }
+
+            if (event.key === '+' || event.key === '=') {
+                event.preventDefault();
+                d3.select("#zoom-in").node().click();
+                return;
+            }
+
+            if (event.key === '-' || event.key === '_') {
+                event.preventDefault();
+                d3.select("#zoom-out").node().click();
+                return;
+            }
+
+            if (event.key === '0') {
+                event.preventDefault();
+                d3.select("#zoom-reset").node().click();
+            }
+        });
+
+        renderChecklist();
+    </script>
+</body>
+</html>
