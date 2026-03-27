@@ -168,7 +168,7 @@
         .delete-btn:hover { color: #d7355f; background: #ffe7ee; border-radius: 8px; transform: none; }
         
         /* Map Styles */
-        .map-path { fill: #dddddd; cursor: pointer; transition: filter 0.1s, opacity 0.1s; }
+        .map-path { cursor: pointer; transition: filter 0.1s, opacity 0.1s; }
         .map-path:hover { opacity: 0.92; stroke: #111111; filter: saturate(1.03); }
         
         .state-mode { stroke: #ffffff; stroke-width: 1.5; }
@@ -831,7 +831,7 @@
             const territoriesData = getActiveTerritories();
             gradientsLayer.selectAll("*").remove();
 
-            mapLayer.selectAll("path").attr("fill", function(d) {
+            mapLayer.selectAll("path").style("fill", function(d) {
                 const mapKey = getMapKey(d);
                 const assignedRepIds = getAssignedRepIds(territoriesData, mapKey);
                 if (assignedRepIds.length === 1) return reps[assignedRepIds[0]].color;
