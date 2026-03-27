@@ -3,7 +3,7 @@
   "rewrites": [
     {
       "source": "/",
-      "destination": "/sales-map(1).html"
+      "destination": "/sales-map%281%29.html"
     }
   ]
 }
